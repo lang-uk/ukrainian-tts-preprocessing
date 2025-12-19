@@ -1,12 +1,10 @@
-import os
+
 import re
-from dotenv import load_dotenv
 import torch
 import json
 import tempfile
 from pathlib import Path
 
-from huggingface_hub import hf_hub_download
 
 from src.accentor.text_utils import (
     UKRAINIAN_LETTERS,
@@ -15,9 +13,7 @@ from src.accentor.text_utils import (
     split_text_by_whitespace
 )
 from utils import shift_stress_marks_right, shift_stress_marks_left
-from nemo.collections.tts.models.base import G2PModel
-
-load_dotenv()
+from transformers import AutoTokenizer, T5ForConditionalGeneration
 
 
 class UkrainianStressifier:
@@ -48,21 +44,10 @@ class UkrainianStressifier:
         self.max_length = max_length
         self.num_beams = num_beams
 
-        if model_path is None:
-            model_path = hf_hub_download(
-                repo_id="mouseyy/stressifier-byt5-g2p-model",
-                filename="T5G2P.nemo",
-                token=hf_token or os.getenv("HF_TOKEN"),
-            )
-        self.model = self._load_model(model_path)
 
-    def _load_model(self, model_path: str):
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model not found at {model_path}")
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path or "patriotyk/stressifier-byt5-g2p-model")
+        self.model = T5ForConditionalGeneration.from_pretrained(model_path or "patriotyk/stressifier-byt5-g2p-model")
 
-        map_location = self.device
-        model = G2PModel.restore_from(model_path, map_location=map_location)
-        return model
 
     def _text_to_phonemes(self, text: str) -> str:
         """
@@ -74,13 +59,12 @@ class UkrainianStressifier:
         Returns:
             str: The phonetic transcription with stress marks.
         """
-        tokenizer = self.model._tokenizer  # T5-based tokenizer
-        inputs = tokenizer(text, return_tensors="pt")
+        inputs = self.tokenizer(text, return_tensors="pt")
         input_ids = inputs.input_ids.to(self.device)
         attention_mask = inputs.attention_mask.to(self.device)
 
         with torch.no_grad():
-            generated_ids = self.model.model.generate(
+            generated_ids = self.model.generate(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 max_length=self.max_length,
@@ -88,7 +72,7 @@ class UkrainianStressifier:
                 early_stopping=True,
             )
 
-        phonemes = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+        phonemes = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
         return phonemes
 
     def _text_to_phonemes_io(self, text: str) -> str:
